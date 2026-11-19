@@ -6,12 +6,33 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 object ApiClient {
 
-    private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    private fun openConfiguredConnection(targetUrl: String, method: String, timeout: Int = 15000): HttpURLConnection {
+    private fun trustAllCertificates() {
+        try {
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+            })
+            val sc = SSLContext.getInstance("TLS")
+            sc.init(null, trustAllCerts, SecureRandom())
+            HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
+            HttpsURLConnection.setDefaultHostnameVerifier { _, _ -> true }
+        } catch (_: Exception) {}
+    }
+
+    private fun openConfiguredConnection(targetUrl: String, method: String, timeout: Int = 20000): HttpURLConnection {
+        trustAllCertificates()
         val url = URL(targetUrl)
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
@@ -20,7 +41,8 @@ object ApiClient {
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", USER_AGENT)
             setRequestProperty("Accept", "application/json, text/plain, */*")
-            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7")
+            setRequestProperty("Connection", "close")
         }
     }
 
@@ -31,24 +53,28 @@ object ApiClient {
                 cleanUrl = "https://$cleanUrl"
             }
             val fullUrl = "$cleanUrl/wp-json/jrweb-sync/v1/ping?api_key=$apiKey"
-            val conn = openConfiguredConnection(fullUrl, "GET", 15000)
+            val conn = openConfiguredConnection(fullUrl, "GET", 20000)
 
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val body = stream?.let { BufferedReader(InputStreamReader(it, "UTF-8")).use { r -> r.readText() } } ?: ""
 
             if (code == 200) {
-                val json = JSONObject(body)
+                val trimBody = body.trim()
+                if (!trimBody.startsWith("{")) {
+                    return Pair(false, "پاسخ غیرمجاز سرور (احتمالاً فایروال): ${trimBody.take(60)}")
+                }
+                val json = JSONObject(trimBody)
                 if (json.optBoolean("success", false)) {
                     Pair(true, json.optString("site_name", "اتصال موفق"))
                 } else {
                     Pair(false, "پاسخ نامعتبر از افزونه")
                 }
             } else {
-                Pair(false, "خطای سرور ($code): ${body.take(80)}")
+                Pair(false, "خطای HTTP ($code): ${body.take(80)}")
             }
         } catch (e: Exception) {
-            Pair(false, "خطای ارتباط: ${e.javaClass.simpleName} - ${e.localizedMessage ?: "بدون جزئیات"}")
+            Pair(false, "جزئیات خطا: ${e.javaClass.simpleName} -> ${e.localizedMessage ?: "نامشخص"}")
         }
     }
 
@@ -60,7 +86,7 @@ object ApiClient {
                 cleanUrl = "https://$cleanUrl"
             }
             val fullUrl = "$cleanUrl/wp-json/jrweb-sync/v1/events?last_id=$lastId&api_key=$apiKey"
-            val conn = openConfiguredConnection(fullUrl, "GET", 15000)
+            val conn = openConfiguredConnection(fullUrl, "GET", 20000)
 
             if (conn.responseCode == 200) {
                 val body = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8")).use { it.readText() }
@@ -93,7 +119,7 @@ object ApiClient {
                 cleanUrl = "https://$cleanUrl"
             }
             val fullUrl = "$cleanUrl/wp-json/jrweb-sync/v1/order-action?api_key=$apiKey"
-            val conn = openConfiguredConnection(fullUrl, "POST", 15000).apply {
+            val conn = openConfiguredConnection(fullUrl, "POST", 20000).apply {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             }
