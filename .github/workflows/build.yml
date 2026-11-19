@@ -1,0 +1,49 @@
+name: Build JRweb WC Monitor APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+
+      - name: Build Debug APK
+        run: gradle assembleDebug
+
+      - name: Build Release APK (Unsigned)
+        run: gradle assembleRelease
+
+      - name: Sign Release APK if KEY secret exists
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEY }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            python3 -c "import os, base64; open('release.keystore', 'wb').write(base64.b64decode(os.environ['KEYSTORE_BASE64']))"
+            BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+            "$BUILD_TOOLS/zipalign" -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk app-aligned.apk
+            "$BUILD_TOOLS/apksigner" sign --ks release.keystore --ks-pass pass:123456 --key-pass pass:123456 --out JRweb-WC-Monitor-Signed.apk app-aligned.apk
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk JRweb-WC-Monitor-Signed.apk
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: JRweb-WC-Monitor-APK
+          path: JRweb-WC-Monitor-Signed.apk
